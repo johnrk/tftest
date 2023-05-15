@@ -1,50 +1,32 @@
-name: 'Fix cloud issues in IaC Pipeline'
-
+name: continuous-delivery
 on:
   push:
     branches:
-    - main
-
+      - main
 jobs:
-  deployment-job: 
-    name: 'Deployment Pipeline' 
+  delivery:
     runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - uses: actions/checkout@v3
+      - uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+      - uses: snyk/actions/setup@master
+      - run: terraform init
 
-## Terraform init, state pull
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_version: 1.1.7
-        terraform_wrapper: false
+      - name: terraform plan
+        run: terraform plan -input=false
 
-    - name: Terraform init
-      run: terraform init
+      # Always report misconfigurations and continue with job
+      - name: snyk iac test
+        run: snyk iac test --org=${{ secrets.SNYK_ORG_ID }} --report || true
 
-    # - name: Terraform Apply
-    #   run: terraform apply --auto-approve 
-    #   continue-on-error: true
+      - name: terraform apply
+        run: terraform apply -auto-approve -input=false
 
-    # - name: Terraform state pull and Capture
-    #   run: terraform state pull | snyk iac capture --stdin
-
-## Send report to Snyk UI
-    - name: Run Snyk Report
-      run : |
-           curl -sSL -o /usr/local/bin/snyk https://static.snyk.io/cli/latest/snyk-linux
-           chmod +x /usr/local/bin/snyk
-           snyk iac test --report --org=${{ secrets.SNYK_ORG }} 
-      continue-on-error: true
-
-### Trigger Scan of the environment
-    - name: Trigger a scan
-      shell: bash
-      run: ./scripts/cloudscan.sh
-
+      - name: capture terraform state
+        run: terraform state pull | snyk iac capture --org=${{ secrets.SNYK_ORG_ID }} --stdin
